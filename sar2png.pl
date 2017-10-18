@@ -2,6 +2,7 @@
 # sar2png - Draws a line chart with data from sar output.
 #
 # Copyright (C) 2010 Joachim "Joe" Stiegler <blablabla@trullowitsch.de>
+# Copyright (C) 2017 Marc-Andre "Madrang" Ferland <madrang+sar2png@gmail.com>
 #
 # This program is free software; you can redistribute it and/or modify it under the terms
 # of the GNU General Public License as published by the Free Software Foundation; either
@@ -23,7 +24,7 @@
 #
 # Uses Chart::Lines from CPAN (http://search.cpan.org/~chartgrp/Chart-2.4.1/Chart.pod)
 #
-# Version: 1.1.1 - 15.11.2011
+# Version: 1.2.0 - 18.10.2017
 # See CHANGELOG for changes
 
 use warnings;
@@ -32,8 +33,9 @@ use Chart::Lines;
 use Getopt::Std;
 use Sys::Hostname;
 use POSIX;
+use Time::Local qw( timegm );
 
-our ($opt_u, $opt_r, $opt_h, $opt_s, $opt_x, $opt_y, $opt_o, $opt_n);	# The commandline options
+our ($opt_u, $opt_r, $opt_n, $opt_w, $opt_f, $opt_a, $opt_h, $opt_s, $opt_x, $opt_y, $opt_o);	# The commandline options
 
 my @uname = uname();		# Like uname -a
 my $sysname = $uname[0];	# Kind of system (Linux or SunOS)
@@ -42,9 +44,16 @@ my @data;		# Array which stores the array references of the usage items (e.g. id
 my @current;	# Temporary data storage
 my @input;		# sar output
 my @legend;		# Legend labels of the chart
+my @colors;		# Color labels of the chart
 my $height = 320;	# default height of the png
 my $width = 480;	# default width of the png
 my $sar;		# predefinition only :-)
+
+$colors[0] = [255,0,0];
+$colors[1] = [0,255,0];
+$colors[2] = [0,0,255];
+$colors[3] = [255,0,255];
+my $rpname = "";
 
 my $count = 0;
 my $rxKBsAvg = 0;
@@ -54,16 +63,27 @@ my $txPcksAvg = 0;
 my $rxCmpsAvg = 0;
 my $txCmpsAvg = 0;
 my $rxMcstsAvg = 0;
+
 my $usrAvg = 0;
 my $sysAvg = 0;
+my $iowAvg = 0;
 my $idleAvg = 0;
+
 my $memAvg = 0;
 my $swapAvg = 0;
+
+my $usedAvg = 0;
+my $cacheAvg = 0;
+my $bufferAvg = 0;
+my $freeAvg = 0;
 
 my @d = localtime(time);	# Time since The Epoch in a 9-element list 
 my $year = $d[5] + 1900;
 my $month = $d[4] + 1;
 my $day = $d[3];
+my $hour = $d[2];
+my $minute = $d[1];
+my $yday = (gmtime(timegm($d[0],$d[1],$d[2],$d[3],$d[4],$d[5]) - 24*60*60))[3];
 
 my $file = $hostname."-".$year."-".$month."-".$day.".png";	# Filename of output png
 
@@ -76,17 +96,29 @@ if (length($day) < 2) {
 	$day = "0".$day;
 }
 
+if (length($yday) < 2) {
+	$yday = "0".$yday;
+}
+
+if (length($hour) < 2) {
+	$hour = "0".$hour;
+}
+
+if (length($minute) < 2) {
+	$minute = "0".$minute;
+}
+
 # The usage message
 sub usage {
 	print "Usage: $0  -u | -r | -n <iface> | [ -s | -x | -y | -o | -h ]\n";
-	print " -u: CPU, -r: RAM, -n: NET, -s: skip every x tick, -h: this message\n";
+	print " -u: CPU, -r: RAM, -w: SWAP, -n: NET, -s: skip every x tick, -h: this message\n";
 	print " -x: height, -y: width, -o outpath\n\n";
 	print "Example; $0 -u -x 480 -y 640 -s 4 -o /home/stats/\n";
 	exit (0);
 }
 
 # Initialize options or print usage message (also print the usage message if unknown options are given)
-if ( (!(getopts("urhs:x:y:o:n:"))) || (defined($opt_h)) ) {
+if ( (!(getopts("urnwfah:s:x:y:o:"))) || (defined($opt_h)) ) {
 	usage();
 }
 
@@ -114,9 +146,40 @@ else {
 	die "Your OS wasn't identified\n";
 }
 
+my $iFile = "";
+my $ydayFile = "";
+
+if (-d "/var/log/sysstat") {
+	$iFile = "/var/log/sysstat/sa$day";
+	if (not -f $iFile) {
+		die "Missing \"$iFile\"\n";
+	}
+	$ydayFile = "/var/log/sysstat/sa$yday";
+} elsif (-d "/var/log/sa") {
+	$iFile = "/var/log/sa/sa$day";
+	if (not -f $iFile) {
+		die "Missing \"$iFile\"\n";
+	}
+	$ydayFile = "/var/log/sa/sa$yday";
+} else {
+	die "Your OS wasn't identified\n";
+}
+
 sub cpustat {
-	@input = `$sar -u`;
-	$file = "CPU-".$file;
+	if (-f $ydayFile) {
+		@input = `$sar -u -s $hour:$minute:00 -f $ydayFile`;
+		push (@input, `$sar -u -f $iFile`);
+	} else {
+		@input = `$sar -u -f $iFile`;
+	}
+	
+	$rpname = "CPU";
+	$file = $rpname."-".$file;
+
+	$colors[0] = [200,0,200];	# iow
+	$colors[1] = [200,0,0];		# sys
+	$colors[2] = [0,200,0];		# usr
+	$colors[3] = [0,100,200];		# idle
 
 	if ($sysname eq "Linux") {
 		foreach my $line (@input) {
@@ -126,20 +189,34 @@ sub cpustat {
 
 			@current = split(' ', $line);
 
-			push @{$data[0]}, $current[0];	# time
-			push @{$data[1]}, $current[2];	# usr
-			push @{$data[2]}, $current[4];	# sys
-			push @{$data[3]}, $current[7];	# idle
+			push @{$data[0]}, $current[0];					# time
+			push @{$data[1]}, $current[5];					# iowait
+			
+			if (defined($opt_a)) {
+				push @{$data[2]}, $current[5] + $current[4];												# sys (display iowait + sys)
+				push @{$data[3]}, $current[5] + $current[4] + $current[3] + $current[2];					# usr (display iowait + sys + usr)
+				if (defined($opt_f)) {
+					push @{$data[4]}, $current[5] + $current[4] + $current[3] + $current[2] + $current[7];	# idle
+				}
+			} else {
+				push @{$data[2]}, $current[4];					# sys
+				push @{$data[3]}, $current[2] + $current[3];	# usr
+				if (defined($opt_f)) {
+					push @{$data[4]}, $current[7];				# idle
+				}
+			}
 
-			$usrAvg += $current[2];
+			$iowAvg += $current[5];
 			$sysAvg += $current[4];
+			$usrAvg += $current[2] + $current[3];
 			$idleAvg += $current[7];
 
 			$count++;
 		}
 
-		$usrAvg = sprintf("%.2f", $usrAvg / $count);
+		$iowAvg = sprintf("%.2f", $iowAvg / $count);
 		$sysAvg = sprintf("%.2f", $sysAvg / $count);
+		$usrAvg = sprintf("%.2f", $usrAvg / $count);
 		$idleAvg = sprintf("%.2f", $idleAvg / $count);
 	}
 	elsif ($sysname eq "SunOS") {
@@ -151,9 +228,12 @@ sub cpustat {
 			@current = split(' ', $line);
 
 			push @{$data[0]}, $current[0];	# time
-			push @{$data[1]}, $current[1];	# usr
+			push @{$data[1]}, 0;			# iowait
 			push @{$data[2]}, $current[2];	# sys
-			push @{$data[3]}, $current[4];	# idle
+			push @{$data[3]}, $current[1];	# usr
+			if (defined($opt_f)) {
+				push @{$data[4]}, $current[4];	# idle
+			}
 
 			$usrAvg += $current[1];
 			$sysAvg += $current[2];
@@ -169,8 +249,20 @@ sub cpustat {
 }
 
 sub ramstat {
-	@input = `$sar -r`;
-	$file = "RAM-".$file;
+	if (-f $ydayFile) {
+		@input = `$sar -r -s $hour:$minute:00 -f $ydayFile`;
+		push (@input, `$sar -r -f $iFile`);
+	} else {
+		@input = `$sar -r -f $iFile`;
+	}
+	
+	$rpname = "RAM";
+	$file = $rpname."-".$file;
+
+	$colors[0] = [200,0,0];	# used
+	$colors[1] = [200,0,200];	# buffer
+	$colors[2] = [0,200,0];	# cache
+	$colors[3] = [0,100,200];	# free
 
 	if ($sysname eq "Linux") {
 		foreach my $line (@input) {
@@ -181,17 +273,44 @@ sub ramstat {
 			@current = split(' ', $line);
 
 			push @{$data[0]}, $current[0];	# time
-			push @{$data[1]}, $current[3];	# mem
-			push @{$data[2]}, $current[8];	# swap
+			if (defined($opt_a)) {
+				#Remove cache from used ram and draw it above used ram.
+				push @{$data[1]}, $current[2] - $current[5];	# used ((Sys used + buffers) - Cache)
+				push @{$data[2]}, $current[4];	# buffer
+				push @{$data[3]}, $current[2];	# cache (ram used)
+				
+				if (defined($opt_f)) {
+					push @{$data[4]}, $current[2] + $current[1];	# free
+				}
+				
+				$usedAvg += $current[2] - $current[5];
+			} else {
+				#Draw cache as used ram.
+				push @{$data[1]}, $current[2];	# used
+				push @{$data[2]}, $current[4];	# buffer
+				push @{$data[3]}, $current[5];	# cache
+				
+				if (defined($opt_f)) {
+					push @{$data[4]}, $current[1];	# free
+				}
+				
+				$usedAvg += $current[2];
+			}
+			
 
-			$memAvg += $current[3];
-			$swapAvg += $current[8];
+
+			$bufferAvg += $current[4];
+			$cacheAvg += $current[5];
+			$freeAvg += $current[1];
 
 			$count++;
 		}
 
-		$memAvg = sprintf("%.2f", $memAvg / $count);
-		$swapAvg = sprintf("%.2f", $swapAvg / $count);
+		$usedAvg = sprintf("%.2f", $usedAvg / $count);
+		$bufferAvg = sprintf("%.2f", $bufferAvg / $count);
+		$cacheAvg = sprintf("%.2f", $cacheAvg / $count);
+		$freeAvg = sprintf("%.2f", $freeAvg / $count);
+		
 	}
 	elsif ($sysname eq "SunOS") {
 		# You can do the same with 7 lines of code on GNU/Linux :-)
@@ -252,8 +371,62 @@ sub ramstat {
 	}
 }
 
+sub swapstat {
+	if (-f $ydayFile) {
+		@input = `$sar -S -s $hour:$minute:00 -f $ydayFile`;
+		push (@input, `$sar -S -f $iFile`);
+	} else {
+		@input = `$sar -S -f $iFile`;
+	}
+	
+	$rpname = "SWAP";
+	$file = $rpname."-".$file;
+
+	$colors[0] = [200,0,0];	# used
+	$colors[1] = [0,200,0];	# cached
+	$colors[2] = [0,100,200];	# free
+
+	if ($sysname eq "Linux") {
+		foreach my $line (@input) {
+			chomp($line);
+
+			next if ($line =~ /^$|^\D|\D$/);
+
+			@current = split(' ', $line);
+
+			push @{$data[0]}, $current[0];	# time
+			if (defined($opt_a)) {
+				push @{$data[1]}, $current[2] - $current[4];	# used - cached
+				push @{$data[2]}, $current[2];	# cached
+				if (defined($opt_f)) {
+					push @{$data[3]}, $current[2] + $current[1];	# free
+				}
+			} else {
+				push @{$data[1]}, $current[2];	# used
+				push @{$data[2]}, $current[4];	# cached
+				if (defined($opt_f)) {
+					push @{$data[3]}, $current[1];	# free
+				}
+			}
+
+			$usedAvg += $current[2];
+			$cacheAvg += $current[4];
+			$freeAvg += $current[1];
+
+			$count++;
+		}
+
+		$usedAvg = sprintf("%.2f", $usedAvg / $count);
+		$cacheAvg = sprintf("%.2f", $cacheAvg / $count);
+		$freeAvg = sprintf("%.2f", $freeAvg / $count);
+	} else {
+		die "Sorry, swap statistics are working only for GNU/Linux at the moment...\n";
+	}
+}
+
 sub netstat {
 	@input = `$sar -n DEV`;
+	$rpname = "NET $opt_n";
 	$file = "$opt_n-".$file;
 
 	if ($sysname eq "Linux") {
@@ -299,21 +472,37 @@ sub netstat {
 
 if (defined($opt_u)) {
 	cpustat();
-	@legend = ("Usr (Avg: $usrAvg)", "Sys (Avg: $sysAvg)", "Idle (Avg: $idleAvg)");
+	@legend = ("IOWait (Avg: $iowAvg)", "Sys (Avg: $sysAvg)", "Usr (Avg: $usrAvg)");
+	if (defined($opt_f)) {
+		push @legend, "Idle (Avg: $idleAvg)";
+	}
+
 }
 elsif (defined($opt_r)) {
 	ramstat();
-	@legend = ("RAM (Avg: $memAvg)", "Swap (Avg: $swapAvg)");
+	if ($sysname eq "Linux") {
+		@legend = ("RAM (Avg: $usedAvg)", "Buffers (Avg: $bufferAvg)", "Cached (Avg: $cacheAvg)");
+		if (defined($opt_f)) {
+			push @legend, "Free (Avg: $freeAvg)";
+		}
+	} else {
+		@legend = ("RAM (Avg: $memAvg)", "Swap (Avg: $swapAvg)");
+	}
+}
+elsif (defined($opt_w)) {
+	swapstat();
+	@legend = ("SWAP (Avg: $usedAvg)", "Cached (Avg: $cacheAvg)");
+	if (defined($opt_f)) {
+		push @legend, "Free (Avg: $freeAvg)";
+	}
 }
 elsif (defined($opt_n)) {
 	netstat();
 	@legend = ("rxpck/s (Avg: $rxPcksAvg)", "txpck/s (Avg: $txPcksAvg)", "rxkB/s (Avg: $rxKBsAvg)", "txkB/s (Avg: $txKBsAvg)", "rxcmp/s (Avg: $rxCmpsAvg)", "txcmp/s (Avg: $txCmpsAvg)", "rxmcst/s (Avg: $rxMcstsAvg)");
-
 }
 else {
 	usage();
 }
-
 
 if ( (defined($opt_x)) && (defined($opt_y)) ) {
 	if ( (is_numeric($opt_x)) && (is_numeric($opt_y)) ) {
@@ -324,12 +513,13 @@ if ( (defined($opt_x)) && (defined($opt_y)) ) {
 
 my $LineDiagram = Chart::Lines->new($width,$height);
 
-$LineDiagram->set('title' => $hostname.": ".$year."-".$month."-".$day);
+$LineDiagram->set('title' => $hostname.": ".$rpname);
+$LineDiagram->set('sub_title' => $year."-".$month."-".$day." ".$hour.":".$minute);
 $LineDiagram->set('legend' => 'right');
-$LineDiagram->set('colors' => { 'background' => [255,255,255], 'text' => [000,000,000], 'grid_lines' => [190,190,190] });
+$LineDiagram->set('colors' => { 'background' => [0,0,0], 'text' => [255,255,255], 'grid_lines' => [190,190,190], 'dataset0' => $colors[0], 'dataset1' => $colors[1], 'dataset2' => $colors[2], 'dataset3' => $colors[3] });
 $LineDiagram->set('grid_lines' => 'true');
 $LineDiagram->set('x_ticks' => 'vertical');
-$LineDiagram->set('brush_size' => 1);
+$LineDiagram->set('brush_size' => 4);
 $LineDiagram->set('precision' => 1);
 $LineDiagram->set('legend_labels' => \@legend);
 
@@ -340,7 +530,8 @@ if (defined($opt_s)) {
 }
 
 if (defined($opt_o)) {
-	$file = $opt_o.$file;
+	#$file = $opt_o.$file;
+	$file = $opt_o;
 }
 
 $LineDiagram->png($file, \@data) or die "Error: $!\n";	# build the png

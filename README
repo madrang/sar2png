@@ -2,6 +2,7 @@ Usage: ./sar2png.pl  -u | -r | -n <iface> | [ -s | -x | -y | -o | -h ]
 
  -u: CPU
  -r: RAM
+ -w: SWAP
  -n: NET
  -s: skip every x tick
  -h: this message

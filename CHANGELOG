@@ -1,6 +1,13 @@
 sar2png.pl Changelog
 ====================
 
+Version: 1.2.0 - 18.10.2017
+---------------------------
+
++ Added custom color support (Colors are defined at the beginning of the script).
++ Added -w for a SWAP graph.
++ Will now always output a 24hrs graph, Fixes the graph resetting at 00:00.
+
 Version: 1.1.1 - 15.11.2011
 ---------------------------
 
