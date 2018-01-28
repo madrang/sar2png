@@ -35,7 +35,21 @@ use Sys::Hostname;
 use POSIX;
 use Time::Local qw( timegm );
 
-our ($opt_u, $opt_r, $opt_n, $opt_w, $opt_f, $opt_a, $opt_h, $opt_s, $opt_x, $opt_y, $opt_o);	# The commandline options
+#
+# $opt_u,    CPU
+# $opt_r,    RAM
+# $opt_n,    NET
+# $opt_w,    SWAP
+# $opt_f,    Display Free/Idle
+# $opt_a,    Add usages where usefull to stack usage graph.
+# $opt_t,    Apply hysteresis to graph to slow the time response and remove unwanted spikes (Cpu, Network).
+# $opt_h,    Help Message
+# $opt_s,    skip every x tick
+# $opt_x,    Height
+# $opt_y,    Width
+# $opt_o     Output Path
+#
+our ($opt_u, $opt_r, $opt_n, $opt_w, $opt_f, $opt_a, $opt_t, $opt_h, $opt_s, $opt_x, $opt_y, $opt_o);	# The commandline options
 
 my @uname = uname();		# Like uname -a
 my $sysname = $uname[0];	# Kind of system (Linux or SunOS)
@@ -118,7 +132,7 @@ sub usage {
 }
 
 # Initialize options or print usage message (also print the usage message if unknown options are given)
-if ( (!(getopts("urnwfah:s:x:y:o:"))) || (defined($opt_h)) ) {
+if ( (!(getopts("urn:wfaht:s:x:y:o:"))) || (defined($opt_h)) ) {
 	usage();
 }
 
@@ -181,6 +195,8 @@ sub cpustat {
 	$colors[2] = [0,200,0];		# usr
 	$colors[3] = [0,100,200];		# idle
 
+	my @hysteresis = ( 0, 0, 0, 0 );
+
 	if ($sysname eq "Linux") {
 		foreach my $line (@input) {
 			chomp($line);
@@ -190,19 +206,40 @@ sub cpustat {
 			@current = split(' ', $line);
 
 			push @{$data[0]}, $current[0];					# time
-			push @{$data[1]}, $current[5];					# iowait
 			
-			if (defined($opt_a)) {
-				push @{$data[2]}, $current[5] + $current[4];												# sys (display iowait + sys)
-				push @{$data[3]}, $current[5] + $current[4] + $current[3] + $current[2];					# usr (display iowait + sys + usr)
-				if (defined($opt_f)) {
-					push @{$data[4]}, $current[5] + $current[4] + $current[3] + $current[2] + $current[7];	# idle
+			if (defined($opt_t) && is_numeric($opt_t)) {
+				$hysteresis[0] = (($current[5] - $hysteresis[0]) / $opt_t) + $hysteresis[0];
+				$hysteresis[1] = (($current[4] - $hysteresis[1]) / $opt_t) + $hysteresis[1];					# sys
+				$hysteresis[2] = ((($current[2] + $current[3]) - $hysteresis[2]) / $opt_t) + $hysteresis[2];	# usr
+				$hysteresis[3] = (($current[7] - $hysteresis[3]) / $opt_t) + $hysteresis[3];					# idle
+				push @{$data[1]}, $hysteresis[0];				# iowait
+				if (defined($opt_a)) {
+					push @{$data[2]}, $hysteresis[0] + $hysteresis[1];											# sys (display iowait + sys)
+					push @{$data[3]}, $hysteresis[0] + $hysteresis[1] + $hysteresis[2];							# usr (display iowait + sys + usr)
+					if (defined($opt_f)) {
+						push @{$data[4]}, $hysteresis[0] + $hysteresis[1] + $hysteresis[2] + $hysteresis[3];	# idle
+					}
+				} else {
+					push @{$data[2]}, $hysteresis[1];					# sys
+					push @{$data[3]}, $hysteresis[2];					# usr
+					if (defined($opt_f)) {
+						push @{$data[4]}, $hysteresis[3];				# idle
+					}
 				}
 			} else {
-				push @{$data[2]}, $current[4];					# sys
-				push @{$data[3]}, $current[2] + $current[3];	# usr
-				if (defined($opt_f)) {
-					push @{$data[4]}, $current[7];				# idle
+				push @{$data[1]}, $current[5];					# iowait
+				if (defined($opt_a)) {
+					push @{$data[2]}, $current[5] + $current[4];												# sys (display iowait + sys)
+					push @{$data[3]}, $current[5] + $current[4] + $current[3] + $current[2];					# usr (display iowait + sys + usr)
+					if (defined($opt_f)) {
+						push @{$data[4]}, $current[5] + $current[4] + $current[3] + $current[2] + $current[7];	# idle
+					}
+				} else {
+					push @{$data[2]}, $current[4];					# sys
+					push @{$data[3]}, $current[2] + $current[3];	# usr
+					if (defined($opt_f)) {
+						push @{$data[4]}, $current[7];				# idle
+					}
 				}
 			}
 
@@ -425,25 +462,54 @@ sub swapstat {
 }
 
 sub netstat {
-	@input = `$sar -n DEV`;
+	if (-f $ydayFile) {
+		@input = `$sar -n DEV -s $hour:$minute:00 -f $ydayFile`;
+		push (@input, `$sar -n DEV -f $iFile`);
+	} else {
+		@input = `$sar -n DEV -f $iFile`;
+	}
+
 	$rpname = "NET $opt_n";
 	$file = "$opt_n-".$file;
+
+	my @hysteresis = ( 0, 0, 0,  0,  0, 0, 0 );
 
 	if ($sysname eq "Linux") {
 		foreach my $line (@input) {
 			chomp($line);
 
+			next if ($line =~ /^$|^\D|\D$/);
+
 			if (($line =~ /$opt_n/) and ($line =~ /^\d/)) {
 				@current = split(' ', $line);
 
-				push @{$data[0]}, $current[0];  # time
-				push @{$data[1]}, $current[2];  # rxpck/s
-				push @{$data[2]}, $current[3];  # txpck/s
-				push @{$data[3]}, $current[4];  # rxkB/s
-				push @{$data[4]}, $current[5];  # txkB/s
-				push @{$data[5]}, $current[6];  # rxcmp/s
-				push @{$data[6]}, $current[7];  # txcmp/s
-				push @{$data[7]}, $current[8];  # rxmcst/s
+				if (defined($opt_t) && is_numeric($opt_t)) {
+					$hysteresis[0] = (($current[2] - $hysteresis[0]) / $opt_t) + $hysteresis[0];  # rxpck/s
+					$hysteresis[1] = (($current[3] - $hysteresis[1]) / $opt_t) + $hysteresis[1];  # txpck/s
+					$hysteresis[2] = (($current[4] - $hysteresis[2]) / $opt_t) + $hysteresis[2];  # rxkB/s
+					$hysteresis[3] = (($current[5] - $hysteresis[3]) / $opt_t) + $hysteresis[3];  # txkB/s
+					$hysteresis[4] = (($current[6] - $hysteresis[4]) / $opt_t) + $hysteresis[4];  # rxcmp/s
+					$hysteresis[5] = (($current[7] - $hysteresis[5]) / $opt_t) + $hysteresis[5];  # txcmp/s
+					$hysteresis[6] = (($current[8] - $hysteresis[6]) / $opt_t) + $hysteresis[6];  # rxmcst/s
+					
+					push @{$data[0]}, $current[0];  # time
+					push @{$data[1]}, $hysteresis[0];  # rxpck/s
+					push @{$data[2]}, $hysteresis[1];  # txpck/s
+					push @{$data[3]}, $hysteresis[2];  # rxkB/s
+					push @{$data[4]}, $hysteresis[3];  # txkB/s
+					push @{$data[5]}, $hysteresis[4];  # rxcmp/s
+					push @{$data[6]}, $hysteresis[5];  # txcmp/s
+					push @{$data[7]}, $hysteresis[6];  # rxmcst/s
+				} else {
+					push @{$data[0]}, $current[0];  # time
+					push @{$data[1]}, $current[2];  # rxpck/s
+					push @{$data[2]}, $current[3];  # txpck/s
+					push @{$data[3]}, $current[4];  # rxkB/s
+					push @{$data[4]}, $current[5];  # txkB/s
+					push @{$data[5]}, $current[6];  # rxcmp/s
+					push @{$data[6]}, $current[7];  # txcmp/s
+					push @{$data[7]}, $current[8];  # rxmcst/s
+				}
 
 				$rxPcksAvg += $current[2];
 				$txPcksAvg += $current[3];
@@ -452,7 +518,7 @@ sub netstat {
 				$rxCmpsAvg += $current[6];
 				$txCmpsAvg += $current[7];
 				$rxMcstsAvg += $current[8];
-	
+
 				$count++;
 			}
 		}
