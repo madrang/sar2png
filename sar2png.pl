@@ -24,7 +24,7 @@
 #
 # Uses Chart::Lines from CPAN (http://search.cpan.org/~chartgrp/Chart-2.4.1/Chart.pod)
 #
-# Version: 1.2.0 - 18.10.2017
+# Version: 1.3.0 - 28.01.2018
 # See CHANGELOG for changes
 
 use warnings;
@@ -305,44 +305,78 @@ sub ramstat {
 	$colors[3] = [0,100,200];	# free
 
 	if ($sysname eq "Linux") {
+		my $sarupdated = 0;
+		
 		foreach my $line (@input) {
 			chomp($line);
+
+			#New sar version added kbavail to the results.
+			if ($sarupdated == 0 && index($line, "kbavail") != -1) {
+				$sarupdated = 1;
+			}
 
 			next if ($line =~ /^$|^\D|\D$/);
 
 			@current = split(' ', $line);
 
 			push @{$data[0]}, $current[0];	# time
-			if (defined($opt_a)) {
-				#Remove cache from used ram and draw it above used ram.
-				push @{$data[1]}, $current[2] - $current[5];	# used ((Sys used + buffers) - Cache)
-				push @{$data[2]}, $current[4];	# buffer
-				push @{$data[3]}, $current[2];	# cache (ram used)
-				
-				if (defined($opt_f)) {
-					push @{$data[4]}, $current[2] + $current[1];	# free
+			if ($sarupdated == 0) {
+				#Old sar version.
+				if (defined($opt_a)) {
+					#Remove cache from used ram and draw it above used ram.
+					push @{$data[1]}, $current[2] - $current[5];	# used ((Sys used + buffers) - Cache)
+					push @{$data[2]}, $current[4];	# buffer
+					push @{$data[3]}, $current[2];	# cache (ram used)
+					
+					if (defined($opt_f)) {
+						push @{$data[4]}, $current[2] + $current[1];	# free
+					}
+					
+					$usedAvg += $current[2] - $current[5];
+				} else {
+					#Draw cache as used ram.
+					push @{$data[1]}, $current[2];	# used
+					push @{$data[2]}, $current[4];	# buffer
+					push @{$data[3]}, $current[5];	# cache
+					
+					if (defined($opt_f)) {
+						push @{$data[4]}, $current[1];	# free
+					}
+					
+					$usedAvg += $current[2];
 				}
-				
-				$usedAvg += $current[2] - $current[5];
+				$bufferAvg += $current[4];
+				$cacheAvg += $current[5];
+				$freeAvg += $current[1];
 			} else {
-				#Draw cache as used ram.
-				push @{$data[1]}, $current[2];	# used
-				push @{$data[2]}, $current[4];	# buffer
-				push @{$data[3]}, $current[5];	# cache
-				
-				if (defined($opt_f)) {
-					push @{$data[4]}, $current[1];	# free
+				#New updated sar -r
+				if (defined($opt_a)) {
+					#Remove cache from used ram and draw it above used ram.
+					push @{$data[1]}, $current[3] - $current[6];	# used ((Sys used + buffers) - Cache)
+					push @{$data[2]}, $current[5];	# buffer
+					push @{$data[3]}, $current[3];	# cache (ram used)
+					
+					if (defined($opt_f)) {
+						push @{$data[4]}, $current[3] + $current[1];	# free
+					}
+					
+					$usedAvg += $current[3] - $current[6];
+				} else {
+					#Draw cache as used ram.
+					push @{$data[1]}, $current[3];	# used
+					push @{$data[2]}, $current[5];	# buffer
+					push @{$data[3]}, $current[6];	# cache
+					
+					if (defined($opt_f)) {
+						push @{$data[4]}, $current[1];	# free
+					}
+					
+					$usedAvg += $current[3];
 				}
-				
-				$usedAvg += $current[2];
+				$bufferAvg += $current[5];
+				$cacheAvg += $current[6];
+				$freeAvg += $current[1];
 			}
-			
-
-
-			$bufferAvg += $current[4];
-			$cacheAvg += $current[5];
-			$freeAvg += $current[1];
-
 			$count++;
 		}
 
