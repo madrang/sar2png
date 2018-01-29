@@ -39,6 +39,7 @@ use Time::Local qw( timegm );
 # $opt_u,    CPU
 # $opt_r,    RAM
 # $opt_n,    NET
+# $opt_m,    TEMP -- other RPM, POWER to be added...
 # $opt_w,    SWAP
 # $opt_f,    Display Free/Idle
 # $opt_a,    Add usages where usefull to stack usage graph.
@@ -49,7 +50,7 @@ use Time::Local qw( timegm );
 # $opt_y,    Width
 # $opt_o     Output Path
 #
-our ($opt_u, $opt_r, $opt_n, $opt_w, $opt_f, $opt_a, $opt_t, $opt_h, $opt_s, $opt_x, $opt_y, $opt_o);	# The commandline options
+our ($opt_u, $opt_r, $opt_n, $opt_m, $opt_w, $opt_f, $opt_a, $opt_t, $opt_h, $opt_s, $opt_x, $opt_y, $opt_o);	# The commandline options
 
 my @uname = uname();		# Like uname -a
 my $sysname = $uname[0];	# Kind of system (Linux or SunOS)
@@ -90,6 +91,8 @@ my $usedAvg = 0;
 my $cacheAvg = 0;
 my $bufferAvg = 0;
 my $freeAvg = 0;
+
+my $pwrAvg = 0;
 
 my @d = localtime(time);	# Time since The Epoch in a 9-element list 
 my $year = $d[5] + 1900;
@@ -132,7 +135,7 @@ sub usage {
 }
 
 # Initialize options or print usage message (also print the usage message if unknown options are given)
-if ( (!(getopts("urn:wfaht:s:x:y:o:"))) || (defined($opt_h)) ) {
+if ( (!(getopts("urn:m:wfaht:s:x:y:o:"))) || (defined($opt_h)) ) {
 	usage();
 }
 
@@ -536,6 +539,45 @@ sub netstat {
 	}
 }
 
+sub tempstat {
+	if (-f $ydayFile) {
+		@input = `$sar -m TEMP -s $hour:$minute:00 -f $ydayFile`;
+		push (@input, `$sar -m TEMP -f $iFile`);
+	} else {
+		@input = `$sar -m TEMP -f $iFile`;
+	}
+	
+	$rpname = "TEMP $opt_m";
+	$file = $rpname."-".$file;
+
+	$colors[0] = [200,0,0];	# used
+	$colors[1] = [0,200,0];	# cached
+	$colors[2] = [0,100,200];	# free
+
+	if ($sysname eq "Linux") {
+		foreach my $line (@input) {
+			chomp($line);
+
+			next if ($line =~ /^$|^\D|\D$/);
+
+			if (($line =~ /$opt_m/) and ($line =~ /^\d/)) {
+				@current = split(' ', $line);
+
+				push @{$data[0]}, $current[0];	# time
+				push @{$data[1]}, $current[2];	# temp
+
+				$pwrAvg += $current[2];
+
+				$count++;
+			}
+		}
+
+		$pwrAvg = sprintf("%.2f", $pwrAvg / $count);
+	} else {
+		die "Sorry, swap statistics are working only for GNU/Linux at the moment...\n";
+	}
+}
+
 if (defined($opt_u)) {
 	cpustat();
 	@legend = ("IOWait (Avg: $iowAvg)", "Sys (Avg: $sysAvg)", "Usr (Avg: $usrAvg)");
@@ -565,6 +607,10 @@ elsif (defined($opt_w)) {
 elsif (defined($opt_n)) {
 	netstat();
 	@legend = ("rxpck/s (Avg: $rxPcksAvg)", "txpck/s (Avg: $txPcksAvg)", "rxkB/s (Avg: $rxKBsAvg)", "txkB/s (Avg: $txKBsAvg)", "rxcmp/s (Avg: $rxCmpsAvg)", "txcmp/s (Avg: $txCmpsAvg)", "rxmcst/s (Avg: $rxMcstsAvg)");
+}
+elsif (defined($opt_m)) {
+	tempstat();
+	@legend = ("Temp C (Avg: $pwrAvg)");
 }
 else {
 	usage();
