@@ -4,6 +4,10 @@ Usage: ./sar2png.pl  -u | -r | -n <iface> | [ -s | -x | -y | -o | -h ]
  -r: RAM
  -w: SWAP
  -n: NET
+ -m: TEMP (RPM, FREQ, ... To be added)
+ -f: display free/idle
+ -a: add usages where usefull to stack usage graph.
+ -t: apply hysteresis to graph to slow the time response and remove unwanted spikes (Cpu, Network).
  -s: skip every x tick
  -h: this message
  -x: height
